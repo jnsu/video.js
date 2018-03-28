@@ -741,11 +741,11 @@ QUnit.module('raw sourceset', () => testTypes.forEach((testType) => QUnit.module
       QUnit.test(`${s1.name} then removeAttribute + ${s2.name} + load`, function(assert) {
         const done = assert.async();
 
-        window.setTimeout(() => {
+        this.el.on('loadstart', () => {
           assert.deepEqual(this.sourcesetState, [oneExpected, twoExpected, twoExpected], 'as expected');
           assert.deepEqual(this.loadstartState, [{currentSrc: sourceTwo.src}], 'as expected');
           done();
-        }, wait);
+        });
 
         s1.fn(this.el, sourceOne.src);
         this.el.removeAttribute('src');
