@@ -83,6 +83,20 @@ export const IE_VERSION = (function() {
 export const IS_SAFARI = (/Safari/i).test(USER_AGENT) && !IS_CHROME && !IS_ANDROID && !IS_EDGE;
 export const IS_ANY_SAFARI = IS_SAFARI || IS_IOS;
 
+export const SAFARI_VERSION = (function() {
+  const version = {};
+
+  if (IS_SAFARI) {
+    const v = (/Version\/([\d.]+)/i).exec(window.navigator.userAgent)[1].split('.');
+
+    version.major = parseFloat(v[0]);
+    version.minor = parseFloat(v[1]);
+    version.patch = parseFloat(v[2]);
+  }
+
+  return version;
+})();
+
 export const TOUCH_ENABLED = Dom.isReal() && (
   'ontouchstart' in window ||
   window.DocumentTouch &&

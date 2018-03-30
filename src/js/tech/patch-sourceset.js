@@ -1,8 +1,31 @@
 /* eslint-env qunit */
 import document from 'global/document';
 import window from 'global/window';
-import {getAbsoluteURL} from '../utils/url.js';
+import {getAbsoluteURL} from '../utils/url';
 import * as browser from '../utils/browser';
+import mergeOptions from '../utils/merge-options';
+
+export const supportsErrorRecovery = (function() {
+  return browser.IS_CHROME || browser.IS_EDGE;
+})();
+
+const polyCustomEvent = function(type, params) {
+  params = params || {};
+  params = mergeOptions({bubbles: false, cancelable: false, detail: undefined }, params);
+
+  const event = document.createEvent('CustomEvent');
+
+  event.initCustomEvent(type, params.bubbles, params.cancelable, params.detail);
+
+  return event;
+};
+
+// so that video.js can still be node required
+if (window.Event) {
+  polyCustomEvent.prototype = window.Event.prototype;
+}
+
+const CustomEvent = typeof window.CustomEvent === 'function' ? window.CustomEvent : polyCustomEvent;
 
 /**
  * This function is used to verify if there is a source value on an element.
@@ -18,7 +41,6 @@ import * as browser from '../utils/browser';
  *         The absolute url to the source or empty string if there is no source.
  */
 const getSrc = (el) => {
-
   // We use the attribute to check if a source is set because when
   // the source for the element is set to a blank string. The attribute will
   // return '' and the property will return window.location.href.
@@ -27,197 +49,6 @@ const getSrc = (el) => {
   }
 
   return '';
-};
-
-/**
- * Trigger the custom `sourceset` event on the native element.
- * this will include what we think the currentSrc will be as a detail.
- *
- * @param {HTMLMediaElement} el
- *        The tech element that the `sourcest` should trigger on
- *
- * @param {string} src
- *        The string to trigger as the source
- */
-const triggerSourceset = (el, src) => {
-  if (typeof src !== 'string') {
-    src = '';
-  }
-
-  el.dispatchEvent(new window.CustomEvent('sourceset', {detail: {src}}));
-};
-
-/**
- * our implementation of a `innerHTML` descriptor for browsers
- * that do not have one
- */
-const innerHTMLDescriptorPolyfill = {
-  get() {
-    return this.cloneNode(true).innerHTML;
-  },
-  set(v) {
-    const children = Array.prototype.slice(this.childNodes);
-
-    // make a dummy node to use innerHTML on
-    const dummy = document.createElement(this.nodeName.toLowerCase());
-
-    // set innerHTML to the value provided
-    dummy.innerHTML = v;
-
-    // make a document fragment to hold the nodes from dummy
-    const docFrag = document.createDocumentFragment();
-
-    // copy all of the nodes created by the innerHTML on dummy
-    // to the document fragment
-    while (dummy.childNodes.length) {
-      docFrag.appendChild(dummy.childNodes[0]);
-    }
-
-    // now we add all of that html in one by appending the
-    // document fragment. This is how innerHTML does it.
-    window.Element.prototype.appendChild.call(this, docFrag);
-
-    // remove all old child nodes
-    while (children.length) {
-      window.Element.prototype.removeChild.call(this, children.shift());
-    }
-
-    // then return the result that innerHTML's setter would
-    return this.innerHTML;
-  },
-  enumerable: true,
-  configurable: true
-};
-
-/**
- * Get the browsers property descriptor for the `innerHTML`
- * property. This will allow us to overwrite it without
- * destroying native functionality.
- *
- * @param {HTMLMediaElement} el
- *        The tech element that should be used to get the descriptor
- *
- * @param {boolean} [forcePolyfill=false]
- *        force the descriptor polyfill to be used, should only be used for tests.
- *
- * @return {Object}
- *          The property descriptor for innerHTML.
- */
-const getInnerHTMLDescriptor = (el, forcePolyfill = false) => {
-  let descriptor = {};
-
-  // we have to force the innerHTML polyfill on safari
-  // as it loads sources from bottom to top when using
-  // the native innerHTML, which is against the spec.
-  if (browser.IS_ANY_SAFARI) {
-    forcePolyfill = true;
-  }
-
-  // preserve native getters/setters already on `el.innerHTML` if they exist
-  if (!forcePolyfill && Object.getOwnPropertyDescriptor(el, 'innerHTML')) {
-    descriptor = Object.getOwnPropertyDescriptor(el, 'innerHTML');
-  } else if (!forcePolyfill && Object.getOwnPropertyDescriptor(window.HTMLMediaElement.prototype, 'innerHTML')) {
-    descriptor = Object.getOwnPropertyDescriptor(window.HTMLMediaElement.prototype, 'innerHTML');
-  } else if (!forcePolyfill && Object.getOwnPropertyDescriptor(window.Element.prototype, 'innerHTML')) {
-    descriptor = Object.getOwnPropertyDescriptor(window.Element.prototype, 'innerHTML');
-  }
-
-  if (!descriptor.set || !descriptor.get) {
-    descriptor = innerHTMLDescriptorPolyfill;
-  }
-
-  descriptor.enumerable = descriptor.enumerable || innerHTMLDescriptorPolyfill.enumerable;
-  descriptor.configurable = descriptor.configurable || innerHTMLDescriptorPolyfill.configurable;
-
-  return descriptor;
-};
-
-/**
- * our implementation of a `src` descriptor for browsers
- * that do not have one
- */
-const srcDescriptorPolyfill = {
-  get() {
-    if (this.src_) {
-      return this.src_;
-    }
-
-    return '';
-  },
-  set(v) {
-    v = String(v);
-
-    this.src_ = getAbsoluteURL(v);
-    window.Element.prototype.setAttribute.call(this, 'src', v);
-
-    return v;
-  },
-  enumerable: true,
-  configurable: true
-};
-
-/**
- * First we try to patch the src property just using the native descriptor.
- * If there isn't a native descriptor we have to polyfill a descriptor which
- * means that we also have to overwrite `setAttribute` and `removeAttribute`
- * property as those would be modified by the native descriptor.
- *
- * @param {HTMLMediaElement} el
- *        The tech element that should have its `src` property patched
- *
- * @param {boolean} [forcePolyfill=false]
- *        force the descriptor polyfill to be used, should only be used for tests.
- *
- */
-const patchSrcProperty = (el, forcePolyfill = false) => {
-  const proto = window.HTMLMediaElement.prototype;
-  let descriptor = {};
-
-  // preserve getters/setters already on `el.src` if they exist
-  if (!forcePolyfill && Object.getOwnPropertyDescriptor(el, 'src')) {
-    descriptor = Object.getOwnPropertyDescriptor(el, 'src');
-  } else if (!forcePolyfill && Object.getOwnPropertyDescriptor(proto, 'src')) {
-    descriptor = Object.getOwnPropertyDescriptor(proto, 'src');
-  }
-
-  if (!descriptor.set || !descriptor.get) {
-    descriptor = srcDescriptorPolyfill;
-
-    const oldFn = {setAttribute: el.setAttribute, removeAttribute: el.removeAttribute};
-
-    // these have to be patched for polyfills, because they effect the src property
-    el.setAttribute = function(...args) {
-      const retval = oldFn.setAttribute.apply(el, args);
-
-      if ((/^src$/i).test(args[0])) {
-        el.src_ = getAbsoluteURL(String(args[1]) || '');
-      }
-
-      return retval;
-    };
-
-    el.removeAttribute = function(...args) {
-      const retval = oldFn.removeAttribute.apply(el, args);
-
-      if ((/^src$/i).test(args[0])) {
-        el.src_ = '';
-      }
-      return retval;
-    };
-  }
-
-  descriptor.enumerable = descriptor.enumerable || srcDescriptorPolyfill.enumerable;
-  descriptor.configurable = descriptor.configurable || srcDescriptorPolyfill.configurable;
-
-  Object.defineProperty(el, 'src', Object.assign({}, descriptor, {
-    set(...args) {
-      const retval = descriptor.set.apply(el, args);
-
-      triggerSourceset(el, getSrc(el));
-
-      return retval;
-    }
-  }));
 };
 
 /**
@@ -240,7 +71,7 @@ const patchSrcProperty = (el, forcePolyfill = false) => {
  *          don't know what source will be selected.
  */
 const runSourceSelection = (el, sources) => {
-  if (el.src) {
+  if (el.hasAttribute('src')) {
     return getSrc(el);
   }
 
@@ -281,6 +112,189 @@ const runSourceSelection = (el, sources) => {
 };
 
 /**
+ * Trigger the custom `sourceset` event on the native element.
+ * this will include what we think the currentSrc will be as a detail.
+ *
+ * @param {HTMLMediaElement} el
+ *        The tech element that the `sourcest` should trigger on
+ *
+ * @param {string} src
+ *        The string to trigger as the source
+ */
+const triggerSourceset = (el, src) => {
+  if (typeof src !== 'string') {
+    src = '';
+  }
+
+  el.dispatchEvent(new CustomEvent('sourceset', {detail: {src}}));
+};
+
+/**
+ * our implementation of a `innerHTML` descriptor for browsers
+ * that do not have one
+ */
+const innerHTMLDescriptorPolyfill = {
+  get() {
+    return this.cloneNode(true).innerHTML;
+  },
+  set(v) {
+    // make a dummy node to use innerHTML on
+    const dummy = document.createElement(this.nodeName.toLowerCase());
+
+    // set innerHTML to the value provided
+    dummy.innerHTML = v;
+
+    // make a document fragment to hold the nodes from dummy
+    const docFrag = document.createDocumentFragment();
+
+    // copy all of the nodes created by the innerHTML on dummy
+    // to the document fragment
+    while (dummy.childNodes.length) {
+      docFrag.appendChild(dummy.childNodes[0]);
+    }
+
+    // remove content
+    this.innerText = '';
+
+    // now we add all of that html in one by appending the
+    // document fragment. This is how innerHTML does it.
+    window.Element.prototype.appendChild.call(this, docFrag);
+
+    // then return the result that innerHTML's setter would
+    return this.innerHTML;
+  },
+  enumerable: true,
+  configurable: true
+};
+
+/**
+ * our implementation of a `src` descriptor for browsers
+ * that do not have one
+ */
+const srcDescriptorPolyfill = {
+  get() {
+    if (this.hasAttribute('src')) {
+      return getAbsoluteURL(window.Element.prototype.getAttribute.call(this, 'src'));
+    }
+
+    return '';
+  },
+  set(v) {
+    window.Element.prototype.setAttribute.call(this, 'src', v);
+
+    return v;
+  },
+  enumerable: true,
+  configurable: true
+};
+
+/**
+ * First we try to patch the src property just using the native descriptor.
+ * If there isn't a native descriptor we have to polyfill a descriptor which
+ * means that we also have to overwrite `setAttribute` and `removeAttribute`
+ * property as those would be modified by the native descriptor.
+ *
+ * @param {HTMLMediaElement} el
+ *        The tech element that should have its `src` property patched
+ *
+ * @param {boolean} [forcePolyfill=false]
+ *        force the descriptor polyfill to be used, should only be used for tests.
+ *
+ */
+const patchSrcProperty = (el, forcePolyfill = false) => {
+  const proto = window.HTMLMediaElement.prototype;
+  let descriptor = {};
+
+  // preserve getters/setters already on `el.src` if they exist
+  if (!forcePolyfill && Object.getOwnPropertyDescriptor(el, 'src')) {
+    descriptor = Object.getOwnPropertyDescriptor(el, 'src');
+  } else if (!forcePolyfill && Object.getOwnPropertyDescriptor(proto, 'src')) {
+    descriptor = Object.getOwnPropertyDescriptor(proto, 'src');
+  }
+
+  if (!descriptor.set || !descriptor.get) {
+    descriptor = srcDescriptorPolyfill;
+  }
+
+  descriptor.enumerable = descriptor.enumerable || srcDescriptorPolyfill.enumerable;
+  descriptor.configurable = descriptor.configurable || srcDescriptorPolyfill.configurable;
+
+  Object.defineProperty(el, 'src', mergeOptions(descriptor, {
+    set(...args) {
+      const retval = descriptor.set.apply(el, args);
+
+      // ie and edge fire loadstart with el.src
+      // even if the attribute is an empty string
+      // other browsers do not
+      if ((browser.IE_VERSION || browser.IS_EDGE)) {
+        triggerSourceset(el, el.src);
+      } else {
+        triggerSourceset(el, getSrc(el));
+      }
+
+      return retval;
+    }
+  }));
+};
+
+const watchForInnerHTMLSource = function(el, forcePolyfill = false) {
+  if (el.watchForInnerHTMLSource_) {
+    return;
+  }
+  el.watchForInnerHTMLSource_ = true;
+  let descriptor = {};
+
+  // we have to force the innerHTML polyfill on safari
+  // as it loads sources from bottom to top when using
+  // the native innerHTML, which is against the spec.
+  if (browser.IS_ANY_SAFARI) {
+    // forcePolyfill = true;
+  }
+
+  // preserve native getters/setters already on `el.innerHTML` if they exist
+  if (!forcePolyfill && Object.getOwnPropertyDescriptor(el, 'innerHTML')) {
+    descriptor = Object.getOwnPropertyDescriptor(el, 'innerHTML');
+  } else if (!forcePolyfill && Object.getOwnPropertyDescriptor(window.HTMLMediaElement.prototype, 'innerHTML')) {
+    descriptor = Object.getOwnPropertyDescriptor(window.HTMLMediaElement.prototype, 'innerHTML');
+  } else if (!forcePolyfill && Object.getOwnPropertyDescriptor(window.Element.prototype, 'innerHTML')) {
+    descriptor = Object.getOwnPropertyDescriptor(window.Element.prototype, 'innerHTML');
+  }
+
+  if (!descriptor.set || !descriptor.get) {
+    descriptor = innerHTMLDescriptorPolyfill;
+  }
+
+  descriptor.enumerable = descriptor.enumerable || innerHTMLDescriptorPolyfill.enumerable;
+  descriptor.configurable = descriptor.configurable || innerHTMLDescriptorPolyfill.configurable;
+
+  Object.defineProperty(el, 'innerHTML', mergeOptions(descriptor, {
+    set(...args) {
+      const retval = descriptor.set.apply(el, args);
+      const sources = el.getElementsByTagName('source');
+
+      // if there were no previous sources
+      if (sources.length) {
+        triggerSourceset(el, runSourceSelection(el, sources));
+      }
+
+      return retval;
+    }
+  }));
+
+  const resetOnSourceset = (e) => {
+    el.watchForInnerHTMLSource_ = false;
+    Object.defineProperty(el, 'innerHTML', descriptor);
+    el.removeEventListener('sourceset', resetOnSourceset);
+
+    if (browser.IS_ANY_SAFARI) {
+      watchForInnerHTMLSource(el, forcePolyfill);
+    }
+  };
+
+  el.addEventListener('sourceset', resetOnSourceset);
+};
+
+/**
  * This function patches `append`, `appendChild`, `innerHTML`, and
  * `insertAdjacentHTML` to detect when a source is first added to
  * a media element. Once a source is set, these properties/methods will
@@ -293,14 +307,12 @@ const runSourceSelection = (el, sources) => {
  *        Force the descriptor polyfills to be used, should only be used for tests.
  */
 const watchForFirstSource = function(el, forcePolyfill = false) {
-
   if (el.watchForFirstSource_) {
     return;
   }
 
-  el.watchForFirstSource_ = true;
+  watchForInnerHTMLSource(el, forcePolyfill);
 
-  const oldProp = {innerHTML: getInnerHTMLDescriptor(el, forcePolyfill)};
   const oldFn = {};
   const appendWrapper = (appendFn) => (...args) => {
     const retval = appendFn(args);
@@ -313,19 +325,13 @@ const watchForFirstSource = function(el, forcePolyfill = false) {
     return retval;
   };
 
-  // only support functions that have browser support
-  ['appendChild', 'append', 'insertAdjacentHTML'].forEach((m) => {
+  ['append', 'appendChild', 'insertAdjacentHTML'].forEach((m) => {
+    // only support functions that have browser support
     if (!el[m]) {
       return;
     }
+    // save old function
     oldFn[m] = el[m];
-  });
-
-  Object.defineProperty(el, 'innerHTML', Object.assign({}, oldProp.innerHTML, {
-    set: appendWrapper((args) => oldProp.innerHTML.set.apply(el, args))
-  }));
-
-  Object.keys(oldFn).forEach((m) => {
     el[m] = appendWrapper((args) => oldFn[m].apply(el, args));
   });
 
@@ -333,7 +339,6 @@ const watchForFirstSource = function(el, forcePolyfill = false) {
     Object.keys(oldFn).forEach((m) => {
       el[m] = oldFn[m].bind(el);
     });
-    Object.defineProperty(el, 'innerHTML', oldProp.innerHTML);
 
     el.watchForFirstSource_ = false;
     el.removeEventListener('sourceset', resetOnSourceset);
@@ -362,7 +367,7 @@ const watchForFirstSource = function(el, forcePolyfill = false) {
  * @return {HTMLMediaElement}
  *         the element with `sourceset` added on
  */
-const patchSourceset = function(el, forcePolyfill) {
+export const patchSourceset = function(el, forcePolyfill) {
   // only patch sourceset if it hasn'd been done yet
   if (el.patchSourceset_) {
     return;
@@ -370,27 +375,26 @@ const patchSourceset = function(el, forcePolyfill) {
 
   el.patchSourceset_ = true;
 
-  // patch the source property, if polyfilled we may have to double
-  // overwire the native property to get the correct functionality
+  // patch the src property
   patchSrcProperty(el, forcePolyfill);
 
-  const oldFn = {load: el.load, setAttribute: el.setAttribute};
-  const loadLogic = () => {
-    const sources = el.getElementsByTagName('source');
-
-    // only trigger sourceset if there is something to load
-    if (getSrc(el) || sources.length > 0) {
-      triggerSourceset(el, runSourceSelection(el, sources));
-    // otherwise watch for the first source append
-    } else {
-      watchForFirstSource(el, forcePolyfill);
-    }
+  const oldFn = {
+    load: el.load,
+    setAttribute: el.setAttribute,
+    removeAttribute: el.removeAttribute
   };
 
   el.load = function() {
     const retval = oldFn.load.call(el);
+    const sources = el.getElementsByTagName('source');
 
-    loadLogic();
+    // only trigger sourceset if there is something to load
+    triggerSourceset(el, runSourceSelection(el, sources));
+
+    // otherwise watch for the first source append
+    if (!el.hasAttribute('src') && sources.length === 0) {
+      watchForFirstSource(el, forcePolyfill);
+    }
 
     return retval;
   };
@@ -399,18 +403,57 @@ const patchSourceset = function(el, forcePolyfill) {
     const retval = oldFn.setAttribute.apply(el, args);
 
     if ((/^src/i).test(args[0])) {
-      el.src_ = getAbsoluteURL(String(args[1]) || '');
-      triggerSourceset(el, getSrc(el));
+      // ie and edge fire loadstart with el.src
+      // even if the attribute is an empty string
+      if ((browser.IE_VERSION || browser.IS_EDGE)) {
+        triggerSourceset(el, el.src);
+      } else {
+        triggerSourceset(el, getSrc(el));
+      }
     }
 
     return retval;
   };
 
-  // run the load logic so that we can fire the first sourceset
-  // if we were given an el with a source.
-  loadLogic();
+  if (supportsErrorRecovery) {
+    el.addEventListener('error', function(e) {
+      if (!el.hasAttribute('src')) {
+        watchForFirstSource(el, forcePolyfill);
+      }
+    });
+  }
+
+  el.removeAttribute = function(...args) {
+    let hadBadSrc = false;
+
+    if (el.hasAttribute('src')) {
+      if (supportsErrorRecovery && el.error) {
+        hadBadSrc = true;
+      } else if (!el.currentSrc) {
+        hadBadSrc = true;
+      }
+      /* } else if (browser.IS_EDGE && el.networkState === 2 || el.networkState === 3) {
+        hadBadSrc = true;
+      } */
+    }
+    const retval = oldFn.removeAttribute.apply(el, args);
+
+    if (hadBadSrc && (/^src/i).test(args[0])) {
+      watchForFirstSource(el, forcePolyfill);
+    }
+
+    return retval;
+  };
+
+  const sources = el.getElementsByTagName('source');
+
+  // trigger a sourceset right away if there is a source while patching
+  if (el.hasAttribute('src') || sources.length > 0) {
+    triggerSourceset(el, runSourceSelection(el, sources));
+  // otherwise watch for the first source append
+  } else {
+    watchForFirstSource(el, forcePolyfill);
+  }
 
   return el;
 };
-
-export default patchSourceset;
