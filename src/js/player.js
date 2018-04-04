@@ -1231,7 +1231,7 @@ class Player extends Component {
    * @param {Tech~SourceObject} srcObj
    *        A string or object source to update our caches to.
    */
-  updateSourceCaches_(srcObj) {
+  updateSourceCaches_(srcObj = '') {
     let src = srcObj;
     let type = '';
 
@@ -1245,7 +1245,7 @@ class Player extends Component {
     this.cache_.sources = this.cache_.sources || [];
 
     // try to get the type of the src that was passed in
-    if (!type) {
+    if (src && !type) {
       type = this.findMimeType_(src);
     }
 
@@ -2554,22 +2554,23 @@ class Player extends Component {
     }
 
     // intial sources
-    this.cache_.sources = sources;
     this.changingSrc_ = true;
-
-    // intial source
-    this.cache_.source = sources[0];
 
     // middlewareSource is the source after it has been changed by middleware
     middleware.setSource(this, sources[0], (middlewareSource, mws) => {
       this.middleware_ = mws;
 
+      this.cache_.sources = sources;
+      this.updateSourceCaches_(middlewareSource);
       const err = this.src_(middlewareSource);
 
       if (err) {
         if (sources.length > 1) {
           return this.src(sources.slice(1));
         }
+
+        this.updateSourceCaches_();
+        this.changingSrc_ = false;
 
         // We need to wrap this in a timeout to give folks a chance to add error event handlers
         this.setTimeout(function() {
@@ -2579,7 +2580,6 @@ class Player extends Component {
         // we could not find an appropriate tech, but let's still notify the delegate that this is it
         // this needs a better comment about why this is needed
         this.triggerReady();
-        this.changingSrc_ = false;
 
         return;
       }
